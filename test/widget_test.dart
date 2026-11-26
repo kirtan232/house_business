@@ -1,30 +1,28 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:house_business/main.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  testWidgets('Splash goes to login, then skip opens the 5 tabs', (tester) async {
+    await tester.pumpWidget(const ProviderScope(child: HouseBusinessApp()));
+    expect(find.text('HouseBusiness'), findsOneWidget);
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    // Splash waits 800 ms then goes to login.
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+    expect(find.text('Log in'), findsOneWidget);
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+    await tester.tap(find.text('Skip to app (temporary)'));
+    await tester.pumpAndSettle();
+    for (final tab in ['Browse', 'Saved', 'Messages', 'Viewings', 'Profile']) {
+      expect(find.text(tab), findsWidgets);
+    }
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    // Switch to the Saved tab.
+    await tester.tap(find.byIcon(Icons.favorite_outline));
+    await tester.pumpAndSettle();
+    expect(find.text('Saved homes'), findsOneWidget);
   });
 }
