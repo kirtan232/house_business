@@ -1,17 +1,29 @@
-# house_business
+# HouseBusiness
 
-A new Flutter project.
+This is a Flutter and Firebase app for buying and selling homes. Sellers post listings with photos. Buyers search with filters, save homes, compare up to 3 side by side, message the seller, and book a time to see the house. Each listing also shows similar homes nearby so buyers can tell if the price makes sense.
 
-## Getting Started
+Made by Kirtan Patel (solo, undergraduate track). Topic is PropertyPulse (House Marketplace).
 
-This project is a starting point for a Flutter application.
+## What the app does
 
-A few resources to get you started if this is your first Flutter project:
+* Work in progress. I'll fill this in as each feature gets done
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+## How to run
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+* `flutter pub get`
+* `flutter run`
+* `flutter test`
+* For the APK: `flutter build apk --release`
+
+## Firebase setup
+
+* Coming soon
+
+## Files
+
+* `lib/main.dart` - starts the app
+* `docs/` - proposal and wireframes
+
+## Known limitations
+
+* Coming soon
