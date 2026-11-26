@@ -21,7 +21,10 @@ Made by Kirtan Patel (solo, undergraduate track). Topic is PropertyPulse (House 
 
 ## Files
 
-* `lib/main.dart` - starts the app
+* `lib/main.dart` - starts Firebase and the app
+* `lib/core/router.dart` - all the routes and the 5 bottom tabs
+* `lib/core/theme.dart` - colors and the app look
+* `lib/features/` - one folder per part of the app (auth, browse, listing, saved, messages, viewings, seller, profile)
 * `docs/` - proposal and wireframes
 
 ## Known limitations

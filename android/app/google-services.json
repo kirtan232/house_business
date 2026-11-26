@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1050415298767",
+    "project_id": "housebusiness",
+    "storage_bucket": "housebusiness.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1050415298767:android:1738c1bd169b61f55e1fba",
+        "android_client_info": {
+          "package_name": "com.example.house_business"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCiM7c0HRy_gNxF70uBRz2PHIBYoHgNAMU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
