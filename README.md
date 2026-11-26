@@ -6,7 +6,11 @@ Made by Kirtan Patel (solo, undergraduate track). Topic is PropertyPulse (House 
 
 ## What the app does
 
-* Work in progress. I'll fill this in as each feature gets done
+* Log in, sign up, and reset your password with email (Firebase Auth)
+* Splash screen checks if you are already logged in and skips the login screen if you are
+* Friendly error messages for wrong password, used email, weak password, and no internet
+* Wrong password and unknown email show the same message, so nobody can check who has an account
+* More features coming as I build them
 
 ## How to run
 

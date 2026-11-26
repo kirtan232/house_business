@@ -1,6 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+
+import '../data/auth_repository.dart';
 
 import '../features/auth/forgot_password_screen.dart';
 import '../features/auth/login_screen.dart';
@@ -22,12 +26,51 @@ import 'home_shell.dart';
 
 final _rootKey = GlobalKey<NavigatorState>();
 
-// The router is a provider so in Step 5 it can watch the login state
-// and send signed out users to /login.
+// Pages you can open without logging in.
+const _authPages = {'/login', '/signup', '/forgot-password'};
+
+// Listens to the login state and tells the router to check redirects again.
+class AuthRefresh extends ChangeNotifier {
+  AuthRefresh(Stream<AuthUser?> userChanges) {
+    _sub = userChanges.listen((user) {
+      this.user = user;
+      ready = true;
+      notifyListeners();
+    });
+  }
+
+  late final StreamSubscription<AuthUser?> _sub;
+  AuthUser? user;
+  bool ready = false; // false until Firebase says if someone is logged in
+
+  @override
+  void dispose() {
+    _sub.cancel();
+    super.dispose();
+  }
+}
+
+// Decides where a user is allowed to be. Kept as its own function so it is easy to test.
+String? authRedirect({required bool ready, required bool signedIn, required String location}) {
+  if (!ready) return location == '/splash' ? null : '/splash';
+  if (!signedIn) return _authPages.contains(location) ? null : '/login';
+  if (_authPages.contains(location) || location == '/splash') return '/browse';
+  return null;
+}
+
 final routerProvider = Provider<GoRouter>((ref) {
+  final auth = AuthRefresh(ref.watch(authRepositoryProvider).userChanges());
+  ref.onDispose(auth.dispose);
+
   return GoRouter(
     navigatorKey: _rootKey,
     initialLocation: '/splash',
+    refreshListenable: auth,
+    redirect: (_, state) => authRedirect(
+      ready: auth.ready,
+      signedIn: auth.user != null,
+      location: state.matchedLocation,
+    ),
     routes: [
       GoRoute(path: '/splash', builder: (_, _) => const SplashScreen()),
       GoRoute(path: '/login', builder: (_, _) => const LoginScreen()),
