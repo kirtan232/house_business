@@ -7,6 +7,7 @@ Made by Kirtan Patel (solo, undergraduate track). Topic is PropertyPulse (House 
 ## What the app does
 
 * Log in, sign up, and reset your password with email (Firebase Auth)
+* Continue with Google on the login and sign up screens. Closing the Google picker just takes you back with no error
 * Splash screen checks if you are already logged in and skips the login screen if you are
 * Friendly error messages for wrong password, used email, weak password, and no internet
 * Wrong password and unknown email show the same message, so nobody can check who has an account

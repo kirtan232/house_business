@@ -36,6 +36,21 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     }
   }
 
+  Future<void> _google() async {
+    if (_loading) return;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      await ref.read(authRepositoryProvider).signInWithGoogle();
+    } on AuthFailure catch (e) {
+      if (mounted) setState(() => _error = e.message);
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
   @override
   void dispose() {
     _email.dispose();
@@ -79,6 +94,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           ),
           const SizedBox(height: 8),
           LoadingButton(label: 'Log in', loading: _loading, onPressed: _submit),
+          GoogleSignInSection(loading: _loading, onPressed: _google),
           const SizedBox(height: 8),
           TextButton(
             onPressed: _loading ? null : () => context.push('/signup'),

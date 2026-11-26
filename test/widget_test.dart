@@ -104,6 +104,30 @@ void main() {
     expect(find.textContaining('already exists'), findsOneWidget);
   });
 
+  testWidgets('Continue with Google logs in', (tester) async {
+    await startApp(tester);
+    await tester.tap(find.text('Continue with Google'));
+    await tester.pumpAndSettle();
+    expect(find.text('Listings feed goes here'), findsOneWidget);
+  });
+
+  testWidgets('closing the Google picker stays on login with no error', (tester) async {
+    final fake = await startApp(tester);
+    fake.googleResult = 'cancel';
+    await tester.tap(find.text('Continue with Google'));
+    await tester.pumpAndSettle();
+    expect(find.text('Welcome back'), findsOneWidget);
+    expect(find.textContaining('failed'), findsNothing);
+  });
+
+  testWidgets('Google error shows a message', (tester) async {
+    final fake = await startApp(tester);
+    fake.googleResult = 'error';
+    await tester.tap(find.text('Continue with Google'));
+    await tester.pumpAndSettle();
+    expect(find.text('Google sign in failed. Please try again.'), findsOneWidget);
+  });
+
   testWidgets('forgot password sends the email and shows a neutral message', (tester) async {
     final fake = await startApp(tester);
     await tester.tap(find.text('Forgot password?'));

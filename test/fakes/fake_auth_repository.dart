@@ -47,6 +47,18 @@ class FakeAuthRepository implements AuthRepository {
   @override
   Future<void> sendPasswordReset(String email) async => resetEmails.add(email);
 
+  // What the fake Google picker does: 'ok', 'cancel', or 'error'.
+  String googleResult = 'ok';
+
+  @override
+  Future<void> signInWithGoogle() async {
+    if (googleResult == 'cancel') return;
+    if (googleResult == 'error') {
+      throw const AuthFailure('Google sign in failed. Please try again.');
+    }
+    _set(const AuthUser(uid: 'uid-google', email: 'google@test.com'));
+  }
+
   @override
   Future<void> signOut() async => _set(null);
 }

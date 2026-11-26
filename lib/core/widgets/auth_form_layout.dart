@@ -55,6 +55,48 @@ class AuthFormLayout extends StatelessWidget {
   }
 }
 
+// "or" line plus the Continue with Google button, used on login and sign up.
+class GoogleSignInSection extends StatelessWidget {
+  const GoogleSignInSection({super.key, required this.loading, required this.onPressed});
+
+  final bool loading;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 16),
+        Row(
+          children: [
+            const Expanded(child: Divider()),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Text('or', style: theme.textTheme.bodySmall),
+            ),
+            const Expanded(child: Divider()),
+          ],
+        ),
+        const SizedBox(height: 16),
+        OutlinedButton.icon(
+          style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+          onPressed: loading ? null : onPressed,
+          icon: Text(
+            'G',
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.bold,
+              color: theme.colorScheme.primary,
+            ),
+          ),
+          label: const Text('Continue with Google'),
+        ),
+      ],
+    );
+  }
+}
+
 // Button that shows a small spinner while loading.
 class LoadingButton extends StatelessWidget {
   const LoadingButton({

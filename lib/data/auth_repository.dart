@@ -1,6 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 
 // Small user object so screens and tests do not depend on the Firebase User class.
 class AuthUser {
@@ -23,6 +24,8 @@ abstract class AuthRepository {
   Future<void> signIn(String email, String password);
   Future<void> signUp(String email, String password);
   Future<void> sendPasswordReset(String email);
+  // Does nothing if the user closes the Google account picker.
+  Future<void> signInWithGoogle();
   Future<void> signOut();
 }
 
@@ -57,8 +60,40 @@ class FirebaseAuthRepository implements AuthRepository {
   Future<void> sendPasswordReset(String email) =>
       _run(() => _auth.sendPasswordResetEmail(email: email));
 
+  // On Android the Google plugin reads the web client ID from google-services.json,
+  // so no ID is written in the code.
+  final GoogleSignIn _google = GoogleSignIn.instance;
+  bool _googleReady = false;
+
   @override
-  Future<void> signOut() => _auth.signOut();
+  Future<void> signInWithGoogle() async {
+    try {
+      if (!_googleReady) {
+        await _google.initialize();
+        _googleReady = true;
+      }
+      final account = await _google.authenticate();
+      final idToken = account.authentication.idToken;
+      if (idToken == null) {
+        throw const AuthFailure('Google did not send a sign in token. Please try again.');
+      }
+      await _run(() => _auth.signInWithCredential(
+            GoogleAuthProvider.credential(idToken: idToken),
+          ));
+    } on GoogleSignInException catch (e) {
+      // Closing the account picker is not an error.
+      if (e.code == GoogleSignInExceptionCode.canceled) return;
+      debugPrint('[auth] google error code=${e.code.name}');
+      throw AuthFailure(friendlyGoogleError(e.code));
+    }
+  }
+
+  @override
+  Future<void> signOut() async {
+    // Also sign out of Google so the account picker shows next time.
+    if (_googleReady) await _google.signOut();
+    await _auth.signOut();
+  }
 
   Future<void> _run(Future<Object?> Function() action) async {
     try {
@@ -92,7 +127,23 @@ String friendlyAuthError(String code) {
       return "Can't reach the server. Check your internet connection.";
     case 'operation-not-allowed':
       return 'This sign in method is not turned on in Firebase.';
+    case 'account-exists-with-different-credential':
+      return 'This email already has an account. Log in with your password.';
     default:
       return 'Something went wrong ($code). Please try again.';
+  }
+}
+
+String friendlyGoogleError(GoogleSignInExceptionCode code) {
+  switch (code) {
+    case GoogleSignInExceptionCode.clientConfigurationError:
+    case GoogleSignInExceptionCode.providerConfigurationError:
+      return 'Google sign in is not set up right for this app yet.';
+    case GoogleSignInExceptionCode.uiUnavailable:
+      return 'Google sign in could not open. Make sure a Google account is on this phone.';
+    case GoogleSignInExceptionCode.interrupted:
+      return 'Google sign in was interrupted. Please try again.';
+    default:
+      return 'Google sign in failed. Please try again.';
   }
 }
