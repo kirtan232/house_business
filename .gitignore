@@ -46,3 +46,20 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Cloud Functions and Node
+functions/node_modules/
+functions/lib/
+node_modules/
+
+# Secrets and local keys (never commit these)
+.env
+*.keystore
+*.jks
+key.properties
+
+# Firebase emulator data and logs
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+.firebase/
