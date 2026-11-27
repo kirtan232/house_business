@@ -1,23 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 
-// Screen 1. For now it just waits a moment and goes to login.
-// In Step 5 it will check if the user is already signed in.
-class SplashScreen extends StatefulWidget {
+// Screen 1. Shows while Firebase checks if the user is already logged in.
+// The router moves away from here as soon as it knows.
+class SplashScreen extends StatelessWidget {
   const SplashScreen({super.key});
-
-  @override
-  State<SplashScreen> createState() => _SplashScreenState();
-}
-
-class _SplashScreenState extends State<SplashScreen> {
-  @override
-  void initState() {
-    super.initState();
-    Future.delayed(const Duration(milliseconds: 800), () {
-      if (mounted) context.go('/login');
-    });
-  }
 
   @override
   Widget build(BuildContext context) {
