@@ -5,9 +5,10 @@ import 'package:google_sign_in/google_sign_in.dart';
 
 // Small user object so screens and tests do not depend on the Firebase User class.
 class AuthUser {
-  const AuthUser({required this.uid, this.email});
+  const AuthUser({required this.uid, this.email, this.displayName});
   final String uid;
   final String? email;
+  final String? displayName; // filled in by Google sign in
 }
 
 // Thrown by the repository with a message that is ok to show on screen.
@@ -38,7 +39,7 @@ class FirebaseAuthRepository implements AuthRepository {
   final FirebaseAuth _auth;
 
   AuthUser? _toAuthUser(User? u) =>
-      u == null ? null : AuthUser(uid: u.uid, email: u.email);
+      u == null ? null : AuthUser(uid: u.uid, email: u.email, displayName: u.displayName);
 
   @override
   Stream<AuthUser?> userChanges() => _auth.authStateChanges().map(_toAuthUser);

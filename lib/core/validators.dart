@@ -17,6 +17,23 @@ String? validatePassword(String? value, {bool isNew = false}) {
   return null;
 }
 
+String? validateName(String? value) {
+  final v = value?.trim() ?? '';
+  if (v.isEmpty) return 'Enter your name.';
+  if (v.length < 2) return 'Name must be at least 2 characters.';
+  if (v.length > 50) return 'Name must be 50 characters or less.';
+  return null;
+}
+
+// Phone is optional. If given it must be 10 digits (US), dashes and spaces are ok.
+String? validatePhone(String? value) {
+  final v = value?.trim() ?? '';
+  if (v.isEmpty) return null;
+  final digits = v.replaceAll(RegExp(r'[\s\-().]'), '');
+  if (!RegExp(r'^\d{10}$').hasMatch(digits)) return 'Enter a 10 digit phone number.';
+  return null;
+}
+
 String? validateConfirmPassword(String? value, String password) {
   final v = value ?? '';
   if (v.isEmpty) return 'Enter your password again.';

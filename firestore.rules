@@ -1,0 +1,44 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function validProfile(data) {
+      return data.keys().hasOnly(['name', 'role', 'photoUrl', 'createdAt'])
+        && data.name is string
+        && data.name.size() >= 2 && data.name.size() <= 50
+        && data.role in ['buyer', 'seller']
+        && (data.photoUrl == null || data.photoUrl is string);
+    }
+
+    // Public profile. Any logged in user can see a name and photo (for chats and listings).
+    match /users/{uid} {
+      allow read: if signedIn();
+
+      allow create: if isOwner(uid)
+        && validProfile(request.resource.data)
+        && request.resource.data.createdAt == request.time;
+
+      // Role and createdAt can never change after signup.
+      allow update: if isOwner(uid)
+        && validProfile(request.resource.data)
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.createdAt == resource.data.createdAt;
+
+      allow delete: if false;
+
+      // Email and phone. Only the owner can read or write these.
+      match /private/{docId} {
+        allow read, write: if isOwner(uid);
+      }
+    }
+  }
+}

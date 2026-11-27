@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../data/auth_repository.dart';
+import '../data/user_repository.dart';
 
 import '../features/auth/forgot_password_screen.dart';
 import '../features/auth/login_screen.dart';
@@ -29,46 +30,83 @@ final _rootKey = GlobalKey<NavigatorState>();
 // Pages you can open without logging in.
 const _authPages = {'/login', '/signup', '/forgot-password'};
 
-// Listens to the login state and tells the router to check redirects again.
-class AuthRefresh extends ChangeNotifier {
-  AuthRefresh(Stream<AuthUser?> userChanges) {
-    _sub = userChanges.listen((user) {
+// Listens to the login state and the user's profile,
+// and tells the router to check redirects again when either changes.
+class SessionRefresh extends ChangeNotifier {
+  SessionRefresh(AuthRepository auth, UserRepository users) {
+    _authSub = auth.userChanges().listen((user) {
+      _profileSub?.cancel();
+      _profileSub = null;
       this.user = user;
-      ready = true;
+      authReady = true;
+      profileReady = user == null; // nothing to load when logged out
+      hasProfile = false;
       notifyListeners();
+      if (user == null) return;
+      _profileSub = users.watchProfile(user.uid).listen(
+        (profile) {
+          hasProfile = profile != null;
+          profileReady = true;
+          notifyListeners();
+        },
+        onError: (Object e) {
+          // Can't read the profile, let the setup screen show the error when saving.
+          debugPrint('[router] profile read failed: $e');
+          profileReady = true;
+          notifyListeners();
+        },
+      );
     });
   }
 
-  late final StreamSubscription<AuthUser?> _sub;
+  late final StreamSubscription<AuthUser?> _authSub;
+  StreamSubscription<Object?>? _profileSub;
   AuthUser? user;
-  bool ready = false; // false until Firebase says if someone is logged in
+  bool authReady = false; // false until Firebase says if someone is logged in
+  bool profileReady = false; // false until we know if they finished profile setup
+  bool hasProfile = false;
+
+  bool get ready => authReady && profileReady;
 
   @override
   void dispose() {
-    _sub.cancel();
+    _authSub.cancel();
+    _profileSub?.cancel();
     super.dispose();
   }
 }
 
 // Decides where a user is allowed to be. Kept as its own function so it is easy to test.
-String? authRedirect({required bool ready, required bool signedIn, required String location}) {
+String? authRedirect({
+  required bool ready,
+  required bool signedIn,
+  required bool hasProfile,
+  required String location,
+}) {
   if (!ready) return location == '/splash' ? null : '/splash';
   if (!signedIn) return _authPages.contains(location) ? null : '/login';
-  if (_authPages.contains(location) || location == '/splash') return '/browse';
+  if (!hasProfile) return location == '/profile-setup' ? null : '/profile-setup';
+  if (_authPages.contains(location) || location == '/splash' || location == '/profile-setup') {
+    return '/browse';
+  }
   return null;
 }
 
 final routerProvider = Provider<GoRouter>((ref) {
-  final auth = AuthRefresh(ref.watch(authRepositoryProvider).userChanges());
-  ref.onDispose(auth.dispose);
+  final session = SessionRefresh(
+    ref.watch(authRepositoryProvider),
+    ref.watch(userRepositoryProvider),
+  );
+  ref.onDispose(session.dispose);
 
   return GoRouter(
     navigatorKey: _rootKey,
     initialLocation: '/splash',
-    refreshListenable: auth,
+    refreshListenable: session,
     redirect: (_, state) => authRedirect(
-      ready: auth.ready,
-      signedIn: auth.user != null,
+      ready: session.ready,
+      signedIn: session.user != null,
+      hasProfile: session.hasProfile,
       location: state.matchedLocation,
     ),
     routes: [

@@ -56,7 +56,7 @@ class FakeAuthRepository implements AuthRepository {
     if (googleResult == 'error') {
       throw const AuthFailure('Google sign in failed. Please try again.');
     }
-    _set(const AuthUser(uid: 'uid-google', email: 'google@test.com'));
+    _set(const AuthUser(uid: 'uid-google', email: 'google@test.com', displayName: 'Gina Google'));
   }
 
   @override
