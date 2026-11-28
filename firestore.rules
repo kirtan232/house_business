@@ -1,7 +1,13 @@
 rules_version = '2';
 
+// HouseBusiness security rules. Each block matches the Security section of the proposal.
+// Cloud Functions use the Admin SDK, which skips these rules. That's how booking a viewing,
+// thread previews, and unread counts get written, since clients are not allowed to write them.
+
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    // ---------- helpers ----------
 
     function signedIn() {
       return request.auth != null;
@@ -11,16 +17,37 @@ service cloud.firestore {
       return signedIn() && request.auth.uid == uid;
     }
 
+    function userDoc(uid) {
+      return get(/databases/$(database)/documents/users/$(uid)).data;
+    }
+
+    function isSeller() {
+      return signedIn() && userDoc(request.auth.uid).role == 'seller';
+    }
+
+    function listingDoc(listingId) {
+      return get(/databases/$(database)/documents/listings/$(listingId)).data;
+    }
+
+    function isNullOr(value, type) {
+      return value == null
+        || (type == 'string' && value is string)
+        || (type == 'number' && value is number)
+        || (type == 'int' && value is int);
+    }
+
+    // ---------- users ----------
+
     function validProfile(data) {
       return data.keys().hasOnly(['name', 'role', 'photoUrl', 'createdAt'])
         && data.name is string
         && data.name.size() >= 2 && data.name.size() <= 50
         && data.role in ['buyer', 'seller']
-        && (data.photoUrl == null || data.photoUrl is string);
+        && isNullOr(data.photoUrl, 'string');
     }
 
-    // Public profile. Any logged in user can see a name and photo (for chats and listings).
     match /users/{uid} {
+      // Any logged in user can see a name and photo (for chats and listings).
       allow read: if signedIn();
 
       allow create: if isOwner(uid)
@@ -35,9 +62,195 @@ service cloud.firestore {
 
       allow delete: if false;
 
-      // Email and phone. Only the owner can read or write these.
+      // Email and phone. Only the owner can see these.
       match /private/{docId} {
         allow read, write: if isOwner(uid);
+      }
+
+      // Saved homes. The doc ID is the listing ID, so a home can't be saved twice.
+      match /saved/{listingId} {
+        allow read, delete: if isOwner(uid);
+        allow create: if isOwner(uid)
+          && request.resource.data.keys().hasOnly(['savedAt'])
+          && request.resource.data.savedAt == request.time;
+        allow update: if false;
+      }
+
+      // People this user blocked. The other person can't send them messages.
+      match /blocked/{otherUid} {
+        allow read, delete: if isOwner(uid);
+        allow create: if isOwner(uid)
+          && otherUid != uid
+          && request.resource.data.keys().hasOnly(['blockedAt'])
+          && request.resource.data.blockedAt == request.time;
+        allow update: if false;
+      }
+    }
+
+    // ---------- listings ----------
+
+    function validListing(data) {
+      return data.keys().hasOnly([
+          'sellerId', 'status', 'title', 'description', 'price', 'type',
+          'beds', 'baths', 'sqft', 'yearBuilt', 'lotSize', 'address', 'city', 'zip',
+          'location', 'amenities', 'photos', 'createdAt', 'updatedAt'])
+        && data.status in ['draft', 'published', 'archived', 'sold']
+        && data.title is string && data.title.size() >= 3 && data.title.size() <= 100
+        && isNullOr(data.description, 'string')
+        && (data.description == null || data.description.size() <= 5000)
+        && data.price is number && data.price > 0 && data.price < 100000000
+        && data.type in ['house', 'townhouse', 'condo', 'apartment']
+        && data.beds is int && data.beds >= 0 && data.beds <= 20
+        && data.baths is number && data.baths >= 0 && data.baths <= 20
+        // These can be missing. The Similar Homes score works with what is there.
+        && isNullOr(data.sqft, 'number')
+        && isNullOr(data.yearBuilt, 'int')
+        && isNullOr(data.lotSize, 'number')
+        && isNullOr(data.address, 'string')
+        && data.city is string && data.city.size() >= 1 && data.city.size() <= 60
+        && data.zip is string && data.zip.matches('^[0-9]{5}$')
+        // Geocoding can fail. Then location is null and the listing still saves with city and ZIP.
+        && (data.location == null
+            || (data.location is map
+                && data.location.keys().hasOnly(['lat', 'lng', 'geohash'])
+                && data.location.lat is number && data.location.lng is number
+                && data.location.geohash is string))
+        && data.amenities is list && data.amenities.size() <= 30
+        && data.photos is list && data.photos.size() <= 12;
+    }
+
+    match /listings/{listingId} {
+      // Buyers only see published listings. Drafts and archived ones are only visible to the seller.
+      allow read: if signedIn()
+        && (resource.data.status == 'published' || resource.data.sellerId == request.auth.uid);
+
+      // Only sellers can create listings, and only for themselves.
+      allow create: if isSeller()
+        && request.resource.data.sellerId == request.auth.uid
+        && validListing(request.resource.data)
+        && request.resource.data.status in ['draft', 'published']
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+
+      // Only the owner can edit. The owner and createdAt can't change.
+      allow update: if signedIn()
+        && resource.data.sellerId == request.auth.uid
+        && validListing(request.resource.data)
+        && request.resource.data.sellerId == resource.data.sellerId
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time;
+
+      // Listings get archived, never deleted.
+      allow delete: if false;
+
+      // Viewing time slots.
+      match /slots/{slotId} {
+        allow read: if signedIn()
+          && (listingDoc(listingId).status == 'published'
+              || listingDoc(listingId).sellerId == request.auth.uid);
+
+        // The seller adds open slots in the future.
+        allow create: if signedIn()
+          && listingDoc(listingId).sellerId == request.auth.uid
+          && request.resource.data.keys().hasOnly(['start', 'end', 'status'])
+          && request.resource.data.status == 'open'
+          && request.resource.data.start is timestamp
+          && request.resource.data.end is timestamp
+          && request.resource.data.end > request.resource.data.start
+          && request.resource.data.start > request.time;
+
+        // Only open slots can be removed. Booked slots are changed only by the bookViewing function,
+        // so two buyers can't grab the same time.
+        allow delete: if signedIn()
+          && listingDoc(listingId).sellerId == request.auth.uid
+          && resource.data.status == 'open';
+        allow update: if false;
+      }
+    }
+
+    // ---------- viewings ----------
+
+    match /viewings/{viewingId} {
+      allow read: if signedIn()
+        && request.auth.uid in [resource.data.buyerId, resource.data.sellerId];
+
+      // Created only by the bookViewing Cloud Function (it uses a transaction).
+      allow create, delete: if false;
+
+      // Only the status can change, and only in these ways:
+      //   seller: requested -> confirmed or declined, confirmed -> cancelled
+      //   buyer:  requested or confirmed -> cancelled
+      allow update: if signedIn()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+        && request.resource.data.updatedAt == request.time
+        && (
+          (request.auth.uid == resource.data.sellerId
+            && ((resource.data.status == 'requested'
+                  && request.resource.data.status in ['confirmed', 'declined'])
+                || (resource.data.status == 'confirmed'
+                  && request.resource.data.status == 'cancelled')))
+          || (request.auth.uid == resource.data.buyerId
+            && resource.data.status in ['requested', 'confirmed']
+            && request.resource.data.status == 'cancelled')
+        );
+    }
+
+    // ---------- chat ----------
+
+    // Thread ID is {listingId}_{buyerId}, so each buyer gets one thread per listing.
+    match /threads/{threadId} {
+      // Reading a thread that doesn't exist yet is allowed, so the app can check before creating it.
+      allow read: if signedIn()
+        && (resource == null || request.auth.uid in resource.data.participants);
+
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly([
+            'listingId', 'listingTitle', 'buyerId', 'sellerId', 'participants',
+            'createdAt', 'lastMessageAt'])
+        && request.resource.data.buyerId == request.auth.uid
+        && request.resource.data.sellerId != request.auth.uid
+        && threadId == request.resource.data.listingId + '_' + request.auth.uid
+        && request.resource.data.participants == [request.auth.uid, request.resource.data.sellerId]
+        && listingDoc(request.resource.data.listingId).sellerId == request.resource.data.sellerId
+        && listingDoc(request.resource.data.listingId).status == 'published'
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.lastMessageAt == request.time;
+
+      // People in the chat can only mark it read for themselves.
+      // lastMessage and unread counts are written by the onMessageCreated function.
+      allow update: if signedIn()
+        && request.auth.uid in resource.data.participants
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastReadAt'])
+        && request.resource.data.lastReadAt
+             .diff(resource.data.get('lastReadAt', {}))
+             .affectedKeys().hasOnly([request.auth.uid])
+        && request.resource.data.lastReadAt[request.auth.uid] == request.time;
+
+      allow delete: if false;
+
+      match /messages/{messageId} {
+        function thread() {
+          return get(/databases/$(database)/documents/threads/$(threadId)).data;
+        }
+        function otherPerson() {
+          return thread().buyerId == request.auth.uid ? thread().sellerId : thread().buyerId;
+        }
+
+        allow read: if signedIn() && request.auth.uid in thread().participants;
+
+        // Only people in the chat can send, as themselves, and not if the other person blocked them.
+        allow create: if signedIn()
+          && request.auth.uid in thread().participants
+          && request.resource.data.keys().hasOnly(['senderId', 'text', 'createdAt'])
+          && request.resource.data.senderId == request.auth.uid
+          && request.resource.data.text is string
+          && request.resource.data.text.size() >= 1
+          && request.resource.data.text.size() <= 2000
+          && request.resource.data.createdAt == request.time
+          && !exists(/databases/$(database)/documents/users/$(otherPerson())/blocked/$(request.auth.uid));
+
+        // Messages can't be edited or deleted.
+        allow update, delete: if false;
       }
     }
   }
