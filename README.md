@@ -14,6 +14,12 @@ Made by Kirtan Patel (solo, undergraduate track). Topic is PropertyPulse (House 
 * New users pick buyer or seller, add their name, and can add a photo and phone. The role can't be changed later
 * Email and phone are saved in `users/{uid}/private/contact` so only the owner can see them
 * Only sellers see "My listings" on the Profile tab
+* Sellers can make a listing with title, type, price, beds, baths, sq ft, year built, lot size, address, amenities, and a description. They can save it as a draft or publish it
+* Sq ft, year built, lot size, and street address are optional. The form checks everything else before saving
+* The address is turned into a map spot with the phone's geocoder. If it can't be found, the listing still saves with just the city and ZIP
+* Editing only looks up the map spot again if the address changed
+* If there is no internet, the listing is kept on the phone and uploads later, and the app says so
+* Leaving the form with unsaved changes asks first
 * More features coming as I build them
 
 ## How to run
@@ -61,6 +67,8 @@ These are in `firestore.indexes.json`.
 * `lib/main.dart` - starts Firebase and the app
 * `lib/core/router.dart` - all the routes and the 5 bottom tabs
 * `lib/core/theme.dart` - colors and the app look
+* `lib/models/` - the user and listing data
+* `lib/data/` - talks to Firebase (auth, users, listings) and the geocoder
 * `lib/features/` - one folder per part of the app (auth, browse, listing, saved, messages, viewings, seller, profile)
 * `rules_test/` - security rules tests that run in the Firebase emulator
 * `docs/` - proposal and wireframes

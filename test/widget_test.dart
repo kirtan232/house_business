@@ -2,28 +2,41 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:go_router/go_router.dart';
 import 'package:house_business/data/auth_repository.dart';
+import 'package:house_business/data/geocoder.dart';
+import 'package:house_business/data/listing_repository.dart';
 import 'package:house_business/data/user_repository.dart';
 import 'package:house_business/main.dart';
 import 'package:house_business/models/app_user.dart';
+import 'package:house_business/models/listing.dart';
 
 import 'fakes/fake_auth_repository.dart';
+import 'fakes/fake_listing_repository.dart';
 import 'fakes/fake_user_repository.dart';
 
 late FakeAuthRepository auth;
 late FakeUserRepository users;
+late FakeListingRepository listings;
+late FakeGeocoder geocoder;
 
 // buyer@test.com already has a buyer profile. New accounts have none.
-Future<void> startApp(WidgetTester tester, {AuthUser? user}) async {
+Future<void> startApp(WidgetTester tester, {AuthUser? user, void Function()? seed}) async {
   auth = FakeAuthRepository(startUser: user);
   users = FakeUserRepository()
     ..addProfile('uid-buyer@test.com', 'Bob Buyer', UserRole.buyer)
     ..addProfile('u1', 'Bob Buyer', UserRole.buyer)
-    ..addProfile('s1', 'Sam Seller', UserRole.seller);
+    ..addProfile('s1', 'Sam Seller', UserRole.seller)
+    ..addProfile('s2', 'Sue Seller', UserRole.seller);
+  listings = FakeListingRepository();
+  geocoder = FakeGeocoder();
+  seed?.call();
   await tester.pumpWidget(ProviderScope(
     overrides: [
       authRepositoryProvider.overrideWithValue(auth),
       userRepositoryProvider.overrideWithValue(users),
+      listingRepositoryProvider.overrideWithValue(listings),
+      geocoderProvider.overrideWithValue(geocoder),
     ],
     child: const HouseBusinessApp(),
   ));
@@ -215,6 +228,167 @@ void main() {
       await tapText(tester, 'Save and continue');
       expect(find.textContaining("Can't reach the server"), findsOneWidget);
       expect(find.text(setupTitle), findsOneWidget);
+    });
+  });
+
+  group('listing form', () {
+    const seller = AuthUser(uid: 's1', email: 's1@test.com');
+
+    // A tall screen so the whole form is built and every field can be found.
+    void tallScreen(WidgetTester tester) {
+      tester.view.physicalSize = const Size(1080, 4000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+    }
+
+    Listing saved(String id, String sellerId) => Listing(
+          id: id,
+          sellerId: sellerId,
+          status: ListingStatus.published,
+          title: 'Old title',
+          price: 300000,
+          type: HomeType.house,
+          beds: 3,
+          baths: 2,
+          address: '1 Oak St',
+          city: 'Atlanta',
+          zip: '30303',
+          location: const ListingLocation(lat: 33.7, lng: -84.4, geohash: 'dn5bnzzzz'),
+        );
+
+    Future<void> openNewListing(WidgetTester tester) async {
+      tallScreen(tester);
+      await startApp(tester, user: seller);
+      await tester.tap(find.byIcon(Icons.person_outline));
+      await tester.pumpAndSettle();
+      await tapText(tester, 'My listings');
+      await tapText(tester, 'New listing');
+      expect(find.text('Price'), findsOneWidget);
+    }
+
+    Future<void> openPath(WidgetTester tester, AuthUser user, String path, {void Function()? seed}) async {
+      tallScreen(tester);
+      await startApp(tester, user: user, seed: seed);
+      GoRouter.of(tester.element(find.byType(NavigationBar))).push(path);
+      await tester.pumpAndSettle();
+    }
+
+    Future<void> fillRequired(WidgetTester tester) async {
+      await tester.enterText(field('Title'), 'Sunny 3 bed near the park');
+      await tester.enterText(field('Price'), '350,000');
+      await tester.enterText(field('Beds'), '3');
+      await tester.enterText(field('Baths'), '2.5');
+      await tester.enterText(field('Street address (optional)'), '12 Main St');
+      await tester.enterText(field('City'), 'Atlanta');
+      await tester.enterText(field('ZIP'), '30303');
+    }
+
+    testWidgets('empty form shows errors and saves nothing', (tester) async {
+      await openNewListing(tester);
+      await tapText(tester, 'Publish');
+      expect(find.text('Enter a title.'), findsOneWidget);
+      expect(find.text('Enter a price.'), findsOneWidget);
+      expect(find.text('Enter the ZIP.'), findsOneWidget);
+      expect(find.text('Fix the fields in red.'), findsOneWidget);
+      expect(listings.listings, isEmpty);
+    });
+
+    testWidgets('seller publishes a listing', (tester) async {
+      await openNewListing(tester);
+      await fillRequired(tester);
+      await tester.enterText(field('Sq ft'), '1600');
+      await tapText(tester, 'Condo');
+      await tapText(tester, 'Garage');
+      await tapText(tester, 'Publish');
+
+      final l = listings.listings.values.single;
+      expect(l.sellerId, 's1');
+      expect(l.status, ListingStatus.published);
+      expect(l.price, 350000);
+      expect(l.baths, 2.5);
+      expect(l.type, HomeType.condo);
+      expect(l.sqft, 1600);
+      expect(l.yearBuilt, isNull);
+      expect(l.amenities, ['Garage']);
+      expect(l.location, isNotNull);
+      expect(geocoder.lookups, ['12 Main St, Atlanta, 30303']);
+
+      // Back on My listings with a message.
+      expect(find.text('Price'), findsNothing);
+      expect(find.textContaining('Listing published.'), findsOneWidget);
+    });
+
+    testWidgets('address not found on the map still saves the draft', (tester) async {
+      await openNewListing(tester);
+      geocoder.found = false;
+      await fillRequired(tester);
+      await tapText(tester, 'Save as draft');
+
+      final l = listings.listings.values.single;
+      expect(l.status, ListingStatus.draft);
+      expect(l.location, isNull);
+      expect(find.textContaining("couldn't find that address"), findsOneWidget);
+    });
+
+    testWidgets('offline save says it will upload later', (tester) async {
+      await openNewListing(tester);
+      listings.offline = true;
+      await fillRequired(tester);
+      await tapText(tester, 'Publish');
+      expect(find.textContaining('No internet right now'), findsOneWidget);
+    });
+
+    testWidgets('server error shows a message and keeps the form', (tester) async {
+      await openNewListing(tester);
+      listings.failSave = true;
+      await fillRequired(tester);
+      await tapText(tester, 'Publish');
+      expect(find.textContaining("Can't reach the server"), findsOneWidget);
+      expect(find.text('Price'), findsOneWidget);
+    });
+
+    testWidgets('edit fills the form and skips the map lookup when the address is the same', (tester) async {
+      await openPath(tester, seller, '/listing-form/l1',
+          seed: () => listings.listings['l1'] = saved('l1', 's1'));
+      expect(find.text('Edit listing'), findsOneWidget);
+      expect(find.text('Old title'), findsOneWidget);
+      expect(find.text('Unpublish'), findsOneWidget);
+
+      await tester.enterText(field('Price'), '289000');
+      await tapText(tester, 'Save changes');
+      expect(listings.listings['l1']!.price, 289000);
+      expect(listings.listings['l1']!.status, ListingStatus.published);
+      expect(listings.listings['l1']!.location, isNotNull);
+      expect(geocoder.lookups, isEmpty);
+    });
+
+    testWidgets("a seller can't edit someone else's listing", (tester) async {
+      await openPath(tester, seller, '/listing-form/l2',
+          seed: () => listings.listings['l2'] = saved('l2', 's2'));
+      expect(find.text('You can only edit your own listings.'), findsOneWidget);
+      expect(find.text('Save changes'), findsNothing);
+    });
+
+    testWidgets("a buyer can't open the form", (tester) async {
+      await openPath(tester, const AuthUser(uid: 'u1', email: 'buyer@test.com'), '/listing-form');
+      expect(find.text('Only sellers can make listings.'), findsOneWidget);
+    });
+
+    testWidgets('leaving with changes asks first', (tester) async {
+      await openNewListing(tester);
+      await tester.enterText(field('Title'), 'Half done');
+      await tester.pump();
+
+      await tester.tap(find.byType(BackButton));
+      await tester.pumpAndSettle();
+      await tapText(tester, 'Keep editing');
+      expect(find.text('Half done'), findsOneWidget);
+
+      await tester.tap(find.byType(BackButton));
+      await tester.pumpAndSettle();
+      await tapText(tester, 'Discard');
+      expect(find.text('Price'), findsNothing);
+      expect(listings.listings, isEmpty);
     });
   });
 }
