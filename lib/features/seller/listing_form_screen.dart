@@ -7,11 +7,21 @@ import '../../core/validators.dart';
 import '../../data/auth_repository.dart';
 import '../../data/geocoder.dart';
 import '../../data/listing_repository.dart';
+import '../../data/photo_repository.dart';
 import '../../data/user_repository.dart';
 import '../../models/listing.dart';
 
+// A photo on the form. It has a url once it's uploaded, and picked bytes if it's new.
+class _FormPhoto {
+  _FormPhoto.saved(String this.url) : picked = null;
+  _FormPhoto.picked(PickedPhoto this.picked);
+
+  String? url;
+  final PickedPhoto? picked;
+}
+
 // Screen 13. Create a new listing, or edit one when listingId is given.
-// Photos and viewing time slots get added to this screen in the next steps.
+// Viewing time slots get added to this screen in the next step.
 class ListingFormScreen extends ConsumerStatefulWidget {
   const ListingFormScreen({super.key, this.listingId});
 
@@ -36,12 +46,15 @@ class _ListingFormScreenState extends ConsumerState<ListingFormScreen> {
   final _description = TextEditingController();
   HomeType _type = HomeType.house;
   final Set<String> _amenities = {};
+  final List<_FormPhoto> _photos = []; // first one is the cover
+  final List<String> _removedUrls = []; // deleted from Storage after the save works
 
   Listing? _original; // the saved version when editing
   late final String _newId; // made once, so trying again doesn't make a second listing
   bool _loading = false;
   String? _loadError;
   bool _saving = false;
+  String? _progress; // "Uploading photo 2 of 5..."
   bool _changed = false;
   String? _error;
 
@@ -89,6 +102,7 @@ class _ListingFormScreenState extends ConsumerState<ListingFormScreen> {
     _description.text = l.description ?? '';
     _type = l.type;
     _amenities.addAll(l.amenities);
+    _photos.addAll(l.photos.map(_FormPhoto.saved));
   }
 
   // 2.0 shows as "2", 2.5 stays "2.5".
@@ -99,10 +113,12 @@ class _ListingFormScreenState extends ConsumerState<ListingFormScreen> {
     return v.isEmpty ? null : v;
   }
 
-  Listing _buildListing(ListingStatus status, String sellerId) {
+  String get _listingId => _original?.id ?? _newId;
+
+  Listing _buildListing(ListingStatus status, String sellerId, List<String> photoUrls) {
     final original = _original;
     return Listing(
-      id: original?.id ?? _newId,
+      id: _listingId,
       sellerId: sellerId,
       status: status,
       title: _title.text.trim(),
@@ -119,16 +135,101 @@ class _ListingFormScreenState extends ConsumerState<ListingFormScreen> {
       zip: _zip.text.trim(),
       location: original?.location,
       amenities: amenityOptions.where(_amenities.contains).toList(),
-      photos: original?.photos ?? const [],
+      photos: photoUrls,
       createdAt: original?.createdAt,
     );
   }
 
+  // ---------- photos ----------
+
+  Future<void> _pickPhotos() async {
+    final room = maxListingPhotos - _photos.length;
+    if (room <= 0) return;
+    try {
+      final picked = await ref.read(photoPickerProvider).pickMany(limit: room);
+      if (!mounted || picked.isEmpty) return; // closed the picker
+      final small = picked.where((p) => p.bytes.length < maxPhotoBytes).toList();
+      final tooBig = picked.length - small.length;
+      final added = small.take(room).toList();
+      final overLimit = small.length - added.length;
+      setState(() {
+        _photos.addAll(added.map(_FormPhoto.picked));
+        _changed = true;
+      });
+      final notes = [
+        if (tooBig > 0) '$tooBig ${tooBig == 1 ? 'photo was' : 'photos were'} over 5 MB and skipped.',
+        if (overLimit > 0) 'You can add up to $maxListingPhotos photos.',
+      ];
+      if (notes.isNotEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(notes.join(' '))));
+      }
+    } catch (e) {
+      debugPrint('[photos] picker failed: $e');
+      if (mounted) setState(() => _error = 'Could not open your photos. Check the app permissions.');
+    }
+  }
+
+  Future<void> _photoOptions(int index) async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (index > 0)
+              ListTile(
+                leading: const Icon(Icons.star_outline),
+                title: const Text('Make cover photo'),
+                onTap: () => Navigator.pop(context, 'cover'),
+              ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline),
+              title: const Text('Remove photo'),
+              onTap: () => Navigator.pop(context, 'remove'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (choice == null || !mounted) return;
+    setState(() {
+      final photo = _photos.removeAt(index);
+      if (choice == 'cover') {
+        _photos.insert(0, photo);
+      } else if (photo.url != null) {
+        _removedUrls.add(photo.url!);
+      }
+      _changed = true;
+    });
+  }
+
+  // Uploads the new photos in order and returns every URL, cover first.
+  // A photo keeps its URL after uploading, so trying again doesn't upload it twice.
+  Future<List<String>> _uploadPhotos(String sellerId) async {
+    final waiting = _photos.where((p) => p.url == null).toList();
+    final repo = ref.read(photoRepositoryProvider);
+    for (var i = 0; i < waiting.length; i++) {
+      setState(() => _progress = 'Uploading photo ${i + 1} of ${waiting.length}...');
+      waiting[i].url = await repo.uploadListingPhoto(
+        sellerId: sellerId,
+        listingId: _listingId,
+        photo: waiting[i].picked!,
+      );
+    }
+    return [for (final p in _photos) p.url!];
+  }
+
+  // ---------- save ----------
+
   Future<void> _save(ListingStatus status) async {
     if (_saving) return;
     FocusScope.of(context).unfocus();
-    if (!_formKey.currentState!.validate()) {
-      setState(() => _error = 'Fix the fields in red.');
+    final formOk = _formKey.currentState!.validate();
+    final needsPhoto = status == ListingStatus.published && _photos.isEmpty;
+    if (!formOk || needsPhoto) {
+      setState(() => _error = needsPhoto && formOk
+          ? 'Add at least one photo before publishing. You can save a draft without photos.'
+          : 'Fix the fields in red.');
       return;
     }
     final uid = ref.read(authRepositoryProvider).currentUser?.uid;
@@ -139,7 +240,9 @@ class _ListingFormScreenState extends ConsumerState<ListingFormScreen> {
       _error = null;
     });
     try {
-      var listing = _buildListing(status, uid);
+      final photoUrls = await _uploadPhotos(uid);
+      setState(() => _progress = 'Saving...');
+      var listing = _buildListing(status, uid, photoUrls);
 
       // Only look up the map spot when the address is new or changed.
       final original = _original;
@@ -152,6 +255,13 @@ class _ListingFormScreenState extends ConsumerState<ListingFormScreen> {
 
       final repo = ref.read(listingRepositoryProvider);
       final online = _editing ? await repo.updateListing(listing) : await repo.createListing(listing);
+
+      // The listing doesn't point at removed photos anymore, so the files can go.
+      final photos = ref.read(photoRepositoryProvider);
+      for (final url in _removedUrls) {
+        photos.delete(url);
+      }
+      _removedUrls.clear();
       if (!mounted) return;
 
       _changed = false;
@@ -160,7 +270,12 @@ class _ListingFormScreenState extends ConsumerState<ListingFormScreen> {
     } on ListingFailure catch (e) {
       if (mounted) setState(() => _error = e.message);
     } finally {
-      if (mounted) setState(() => _saving = false);
+      if (mounted) {
+        setState(() {
+          _saving = false;
+          _progress = null;
+        });
+      }
     }
   }
 
@@ -201,6 +316,15 @@ class _ListingFormScreenState extends ConsumerState<ListingFormScreen> {
       ),
     );
     if (discard == true && mounted) {
+      // Photos uploaded during a save that then failed aren't used by any listing.
+      final kept = _original?.photos ?? const [];
+      final unused = [..._photos.map((p) => p.url), ..._removedUrls]
+          .whereType<String>()
+          .where((url) => !kept.contains(url));
+      final photos = ref.read(photoRepositoryProvider);
+      for (final url in unused) {
+        photos.delete(url);
+      }
       setState(() => _changed = false);
       _leave();
     }
@@ -244,6 +368,24 @@ class _ListingFormScreenState extends ConsumerState<ListingFormScreen> {
             child: ListView(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
               children: [
+                Text('Photos (${_photos.length} of $maxListingPhotos)',
+                    style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 4),
+                Text(
+                  'The first photo is the cover. Tap a photo to make it the cover or remove it.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  height: 110,
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    children: [
+                      for (var i = 0; i < _photos.length; i++) _photoTile(i),
+                      if (_photos.length < maxListingPhotos) _addPhotoTile(),
+                    ],
+                  ),
+                ),
                 _section('The basics'),
                 TextFormField(
                   controller: _title,
@@ -363,6 +505,10 @@ class _ListingFormScreenState extends ConsumerState<ListingFormScreen> {
                   ),
                   const SizedBox(height: 12),
                 ],
+                if (_progress != null) ...[
+                  Text(_progress!, textAlign: TextAlign.center),
+                  const SizedBox(height: 12),
+                ],
                 _buttons(),
               ],
             ),
@@ -410,6 +556,76 @@ class _ListingFormScreenState extends ConsumerState<ListingFormScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _photoTile(int i) {
+    final photo = _photos[i];
+    Widget broken(BuildContext _, Object _, StackTrace? _) =>
+        const Center(child: Icon(Icons.broken_image_outlined));
+    final image = photo.picked != null
+        ? Image.memory(photo.picked!.bytes, fit: BoxFit.cover, errorBuilder: broken)
+        : Image.network(photo.url!, fit: BoxFit.cover, errorBuilder: broken);
+    final colors = Theme.of(context).colorScheme;
+
+    return Padding(
+      key: ValueKey('photo-$i'),
+      padding: const EdgeInsets.only(right: 8),
+      child: Semantics(
+        label: i == 0 ? 'Photo 1, cover' : 'Photo ${i + 1}',
+        button: true,
+        child: InkWell(
+          onTap: _saving ? null : () => _photoOptions(i),
+          borderRadius: BorderRadius.circular(12),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: SizedBox(
+              width: 110,
+              height: 110,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  ColoredBox(color: colors.surfaceContainerHighest, child: image),
+                  if (i == 0)
+                    Positioned(
+                      left: 6,
+                      top: 6,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: colors.primary,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text('Cover', style: TextStyle(color: colors.onPrimary, fontSize: 12)),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _addPhotoTile() {
+    return SizedBox(
+      width: 110,
+      child: OutlinedButton(
+        style: OutlinedButton.styleFrom(
+          padding: EdgeInsets.zero,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+        onPressed: _saving ? null : _pickPhotos,
+        child: const Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.add_a_photo_outlined),
+            SizedBox(height: 6),
+            Text('Add photos'),
+          ],
+        ),
+      ),
     );
   }
 

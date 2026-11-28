@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:house_business/data/auth_repository.dart';
 import 'package:house_business/data/geocoder.dart';
 import 'package:house_business/data/listing_repository.dart';
+import 'package:house_business/data/photo_repository.dart';
 import 'package:house_business/data/user_repository.dart';
 import 'package:house_business/main.dart';
 import 'package:house_business/models/app_user.dart';
@@ -13,12 +14,15 @@ import 'package:house_business/models/listing.dart';
 
 import 'fakes/fake_auth_repository.dart';
 import 'fakes/fake_listing_repository.dart';
+import 'fakes/fake_photo_repository.dart';
 import 'fakes/fake_user_repository.dart';
 
 late FakeAuthRepository auth;
 late FakeUserRepository users;
 late FakeListingRepository listings;
 late FakeGeocoder geocoder;
+late FakePhotoPicker picker;
+late FakePhotoRepository photos;
 
 // buyer@test.com already has a buyer profile. New accounts have none.
 Future<void> startApp(WidgetTester tester, {AuthUser? user, void Function()? seed}) async {
@@ -30,6 +34,8 @@ Future<void> startApp(WidgetTester tester, {AuthUser? user, void Function()? see
     ..addProfile('s2', 'Sue Seller', UserRole.seller);
   listings = FakeListingRepository();
   geocoder = FakeGeocoder();
+  picker = FakePhotoPicker();
+  photos = FakePhotoRepository();
   seed?.call();
   await tester.pumpWidget(ProviderScope(
     overrides: [
@@ -37,6 +43,8 @@ Future<void> startApp(WidgetTester tester, {AuthUser? user, void Function()? see
       userRepositoryProvider.overrideWithValue(users),
       listingRepositoryProvider.overrideWithValue(listings),
       geocoderProvider.overrideWithValue(geocoder),
+      photoPickerProvider.overrideWithValue(picker),
+      photoRepositoryProvider.overrideWithValue(photos),
     ],
     child: const HouseBusinessApp(),
   ));
@@ -254,7 +262,13 @@ void main() {
           city: 'Atlanta',
           zip: '30303',
           location: const ListingLocation(lat: 33.7, lng: -84.4, geohash: 'dn5bnzzzz'),
+          photos: const ['https://old/1.jpg', 'https://old/2.jpg'],
         );
+
+    Future<void> addPhotos(WidgetTester tester, List<PickedPhoto> picked) async {
+      picker.next = picked;
+      await tapText(tester, 'Add photos');
+    }
 
     Future<void> openNewListing(WidgetTester tester) async {
       tallScreen(tester);
@@ -273,7 +287,9 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    Future<void> fillRequired(WidgetTester tester) async {
+    // Fills every required field and adds one photo so it can be published.
+    Future<void> fillRequired(WidgetTester tester, {bool photo = true}) async {
+      if (photo) await addPhotos(tester, [fakePhoto()]);
       await tester.enterText(field('Title'), 'Sunny 3 bed near the park');
       await tester.enterText(field('Price'), '350,000');
       await tester.enterText(field('Beds'), '3');
@@ -311,6 +327,7 @@ void main() {
       expect(l.yearBuilt, isNull);
       expect(l.amenities, ['Garage']);
       expect(l.location, isNotNull);
+      expect(l.photos, ['https://fake.storage/listing_photos/s1/new1/1-10b.jpg']);
       expect(geocoder.lookups, ['12 Main St, Atlanta, 30303']);
 
       // Back on My listings with a message.
@@ -372,6 +389,74 @@ void main() {
     testWidgets("a buyer can't open the form", (tester) async {
       await openPath(tester, const AuthUser(uid: 'u1', email: 'buyer@test.com'), '/listing-form');
       expect(find.text('Only sellers can make listings.'), findsOneWidget);
+    });
+
+    testWidgets('publishing needs a photo, a draft does not', (tester) async {
+      await openNewListing(tester);
+      await fillRequired(tester, photo: false);
+      await tapText(tester, 'Publish');
+      expect(find.textContaining('Add at least one photo before publishing'), findsOneWidget);
+      expect(listings.listings, isEmpty);
+
+      await tapText(tester, 'Save as draft');
+      expect(listings.listings.values.single.photos, isEmpty);
+    });
+
+    testWidgets('photos upload in order and the chosen cover goes first', (tester) async {
+      await openNewListing(tester);
+      await fillRequired(tester, photo: false);
+      await addPhotos(tester, [fakePhoto(bytes: 11), fakePhoto(bytes: 12), fakePhoto(bytes: 13)]);
+      expect(find.text('Photos (3 of 12)'), findsOneWidget);
+      expect(picker.lastLimit, 12);
+
+      // Make the third photo the cover.
+      await tester.tap(find.byKey(const ValueKey('photo-2')));
+      await tester.pumpAndSettle();
+      await tapText(tester, 'Make cover photo');
+      await tapText(tester, 'Publish');
+
+      // Uploaded in the new order, into this seller's folder for this listing.
+      const base = 'https://fake.storage/listing_photos/s1/new1';
+      expect(photos.uploadedPaths.first, startsWith('listing_photos/s1/new1/'));
+      expect(listings.listings.values.single.photos, ['$base/1-13b.jpg', '$base/2-11b.jpg', '$base/3-12b.jpg']);
+    });
+
+    testWidgets('photos over 5 MB are skipped with a message', (tester) async {
+      await openNewListing(tester);
+      await addPhotos(tester, [fakePhoto(), fakePhoto(bytes: maxPhotoBytes + 1)]);
+      expect(find.text('Photos (1 of 12)'), findsOneWidget);
+      expect(find.textContaining('over 5 MB'), findsOneWidget);
+    });
+
+    testWidgets('a failed upload keeps the form, and trying again only uploads what is left', (tester) async {
+      await openNewListing(tester);
+      await fillRequired(tester, photo: false);
+      await addPhotos(tester, [fakePhoto(), fakePhoto()]);
+      photos.failOnUpload = 1; // the second upload fails
+
+      await tapText(tester, 'Publish');
+      expect(find.textContaining("Can't upload photos right now"), findsOneWidget);
+      expect(listings.listings, isEmpty);
+      expect(photos.uploadedPaths, hasLength(1));
+
+      await tapText(tester, 'Publish');
+      expect(photos.uploadedPaths, hasLength(2));
+      expect(listings.listings.values.single.photos, hasLength(2));
+    });
+
+    testWidgets('removing a saved photo deletes the file after saving', (tester) async {
+      await openPath(tester, seller, '/listing-form/l1',
+          seed: () => listings.listings['l1'] = saved('l1', 's1'));
+      expect(find.text('Photos (2 of 12)'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('photo-0')));
+      await tester.pumpAndSettle();
+      await tapText(tester, 'Remove photo');
+      expect(photos.deleted, isEmpty); // not until the save works
+
+      await tapText(tester, 'Save changes');
+      expect(listings.listings['l1']!.photos, ['https://old/2.jpg']);
+      expect(photos.deleted, ['https://old/1.jpg']);
     });
 
     testWidgets('leaving with changes asks first', (tester) async {

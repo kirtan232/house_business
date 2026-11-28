@@ -20,6 +20,11 @@ Made by Kirtan Patel (solo, undergraduate track). Topic is PropertyPulse (House 
 * Editing only looks up the map spot again if the address changed
 * If there is no internet, the listing is kept on the phone and uploads later, and the app says so
 * Leaving the form with unsaved changes asks first
+* Sellers can add up to 12 photos. The first one is the cover, and tapping a photo lets you make it the cover or remove it
+* A listing needs at least one photo to be published. Drafts can have none
+* Photos are made smaller on the phone before uploading. Any photo over 5 MB is skipped with a message
+* Photos upload when you save, and the screen shows "Uploading photo 2 of 5". If one fails, trying again only uploads the ones that are left
+* Removed photos are deleted from Storage only after the listing saves
 * More features coming as I build them
 
 ## How to run
