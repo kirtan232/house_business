@@ -1,0 +1,14 @@
+{
+  "name": "house-business-rules-test",
+  "private": true,
+  "description": "Security rules tests for HouseBusiness. Run with npm test (starts the emulators).",
+  "scripts": {
+    "test": "firebase emulators:exec --only firestore,storage --project demo-housebusiness \"npm run mocha\"",
+    "mocha": "mocha --timeout 20000 --exit firestore.test.js && mocha --timeout 20000 --exit storage.test.js"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^6.0.0",
+    "firebase": "^13.4.0",
+    "mocha": "^12.0.3"
+  }
+}
